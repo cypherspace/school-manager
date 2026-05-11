@@ -9,15 +9,26 @@ import {
 } from "./incidents.ts";
 import { calculateYearEndResults, rolloverYear } from "./results.ts";
 import { ALL_SUBJECTS } from "./types.ts";
+import { CONFIG } from "./config.ts";
+import { tickSectorYear } from "./sector.ts";
+import {
+  archiveCurrentSchool,
+  fireVacancyWave,
+  resolveInterviewsForWave,
+} from "./career.ts";
+import { tickFormerSchool } from "./formerSchools.ts";
+import { applyIncidentReputation, applyHireabilityFloor, snapshotReputation, applySackingReputationHit } from "./reputation.ts";
 import type {
   GameState,
   HistoryEntry,
+  ID,
   IncidentInstance,
   ProgressSnapshot,
   Pupil,
   ResolutionEffects,
   Staff,
   Subject,
+  VacancyWave,
 } from "./types.ts";
 
 const MAX_STEPS_PER_CONTINUE = 1000; // safety rail
@@ -56,6 +67,10 @@ function applyEffects(
   inst: IncidentInstance,
   eff: ResolutionEffects,
 ): void {
+  if (!state.school) {
+    log(state, eff.narration);
+    return;
+  }
   const rep = state.school.reputation;
   if (eff.discipline) rep.discipline = clamp(rep.discipline + eff.discipline, 0, 100);
   if (eff.pastoral) rep.pastoral = clamp(rep.pastoral + eff.pastoral, 0, 100);
@@ -80,6 +95,7 @@ function applyEffects(
     const p = state.pupils[inst.pupilId];
     if (p) p.notes.push(...eff.pupilNotes);
   }
+  applyIncidentReputation(state, eff);
   log(state, eff.narration);
 }
 
@@ -120,8 +136,23 @@ export function stepDay(state: GameState): StepResult {
   const events: string[] = [];
   let pauseReason: string | null = null;
 
+  // Unemployed shell: time still passes, but no incidents or pupil progression.
+  if (state.mode !== "in-post" || !state.school) {
+    fireWavesIfDue(state, info.date);
+    if (info.isYearEnd) {
+      pauseReason = `Year ${info.schoolYearLabel} results day`;
+    }
+    state.dayIndex += 1;
+    syncRng(state, rng);
+    if (pauseReason) state.pauseReason = pauseReason;
+    return { paused: pauseReason !== null, reason: pauseReason, events };
+  }
+
   // Auto-resolve expired items first (so the day starts clean).
   events.push(...applyExpired(state));
+
+  // Fire vacancy waves at the right calendar points (in-post too).
+  fireWavesIfDue(state, info.date);
 
   // Incident firing only on teaching days.
   if (info.inTerm) {
@@ -248,7 +279,7 @@ function setPositionEffect(state: GameState, pupil: Pupil, subject: Subject): nu
 function progressPupilsAtReportingPoint(state: GameState, rng: RNG): void {
   // Fallback when a pupil has no teacher (manual allocation pending, or
   // missing staff): pull the school's staff-morale signal as a coarse proxy.
-  const fallbackTeacherEffect = (state.school.reputation.staffMorale - 50) / 100;
+  const fallbackTeacherEffect = ((state.school?.reputation.staffMorale ?? 50) - 50) / 100;
 
   for (const p of Object.values(state.pupils)) {
     const ambitionFactor = (p.ambition - 50) / 200;
@@ -330,7 +361,9 @@ export function resolveIncident(
 // Roll forward into the next school year. Called by the UI after the player
 // has reviewed results.
 export function advanceToNextYear(state: GameState): void {
-  rolloverYear(state);
+  if (state.school) {
+    rolloverYear(state);
+  }
   // Reset dayIndex by re-anchoring schoolYearStart and resetting inbox state.
   state.schoolYearStart += 1;
   state.dayIndex = 0;
@@ -341,14 +374,86 @@ export function advanceToNextYear(state: GameState): void {
   state.inbox = [];
   // Headteacher ages.
   state.headteacher.age += 1;
-  state.headteacher.yearsAsHead += 1;
-  state.school.yearsInspected += 1;
+  if (state.mode === "in-post") state.headteacher.yearsAsHead += 1;
+  if (state.school) state.school.yearsInspected += 1;
   state.pauseReason = undefined;
+
+  // Snapshot reputation BEFORE applying expectations-check, so year-in-review
+  // can show the delta from the new headline numbers.
+  // (results.ts runs the expectations check during rolloverYear; we just take
+  // the snapshot here at the very end.)
+  snapshotReputation(state);
+
+  // Run sacking check (in-post only). Two consecutive Inadequates triggers
+  // archival as "sacked" + a large reputation hit. Career-end is gated on the
+  // reputation floor, applied below.
+  if (state.mode === "in-post" && state.school) {
+    if (state.school.inspectionGrade === "Inadequate") {
+      state.headteacher.inadequateStreak += 1;
+    } else {
+      state.headteacher.inadequateStreak = 0;
+    }
+    if (state.headteacher.inadequateStreak >= 2) {
+      log(state, "No-confidence vote at governors — you are out.");
+      archiveCurrentSchool(state, "sacked");
+      applySackingReputationHit(state);
+      state.headteacher.inadequateStreak = 0;
+    }
+  }
+
+  // Sector ticks: NPC heads age, retire, get sacked, move; record pending vacancies.
+  const yearRng = new RNG(`${state.seedLabel}:sector:${state.schoolYearStart}`);
+  tickSectorYear(state, yearRng);
+
+  // Tick every archived school once per year so the world doesn't freeze.
+  for (const formerId of Object.keys(state.formerSchools) as ID[]) {
+    tickFormerSchool(state, formerId);
+  }
+
+  // Hireability floor: end career if unhireable for too long.
+  applyHireabilityFloor(state);
+
   // Force-retire at 75.
-  if (state.headteacher.age >= 75) {
+  if (state.headteacher.age >= CONFIG.forceRetireAge) {
     state.gameOver = true;
     state.gameOverReason = "Retired at 75. A long and distinguished career.";
+    state.mode = "retired";
   }
+}
+
+// Vacancy waves: each wave fires on a specific real-world date.
+// Post-Christmas → ~ Jan 8 (Spring half-term 3 start area).
+// Post-Easter → ~ April 15 (Summer half-term 5 start).
+// Summer → ~ June 2 (Summer half-term 6 start).
+function fireWavesIfDue(state: GameState, date: Date): void {
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const checks: Array<[VacancyWave, number, number]> = [
+    ["post-christmas", 0, 8],
+    ["post-easter", 3, 15],
+    ["summer", 5, 2],
+  ];
+  for (const [wave, m, d] of checks) {
+    if (month === m && day === d && state.sector.lastWaveFiredYear[wave] !== state.schoolYearStart) {
+      fireVacancyWave(state, wave, null);
+      // Resolve any pending applications a few weeks later — we simulate by
+      // resolving at the same trigger point, so player offers arrive in-band.
+      const outcomes = resolveInterviewsForWave(state, wave);
+      for (const out of outcomes) {
+        if (out.playerOffered) {
+          state.pauseReason = `Offer received from ${nameForVacancy(state, out.vacancyId)}`;
+        } else if (out.playerRejected) {
+          log(state, `Rejected: ${nameForVacancy(state, out.vacancyId)}`);
+        }
+      }
+    }
+  }
+}
+
+function nameForVacancy(state: GameState, vacancyId: ID): string {
+  const vac = state.sector.vacancies[vacancyId];
+  if (!vac) return "(unknown school)";
+  return state.sector.schools[vac.schoolId]?.name ?? "(unknown school)";
 }
 
 // Convenience: how many days until the year ends?

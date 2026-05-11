@@ -100,7 +100,7 @@ const TEMPLATES: IncidentTemplate[] = [
     pauses: false,
     ttlDays: 21,
     baseWeight: 6,
-    weightModifier: (c) => 1 + (100 - c.state.school.reputation.discipline) / 100,
+    weightModifier: (c) => 1 + (100 - (c.state.school?.reputation.discipline ?? 50)) / 100,
     generate: (c) => {
       const p = pickPupilWeighted(c.rng, activePupils(c.state), (x) => x.behaviourPropensity);
       if (!p) return null;
@@ -378,7 +378,7 @@ const TEMPLATES: IncidentTemplate[] = [
     pauses: true,
     ttlDays: 5,
     baseWeight: 0.3,
-    weightModifier: (c) => 1 + (60 - c.state.school.reputation.staffMorale) / 60,
+    weightModifier: (c) => 1 + (60 - (c.state.school?.reputation.staffMorale ?? 50)) / 60,
     generate: (c) => {
       const s = pickStaffWeighted(c.rng, activeStaff(c.state), (x) =>
         Math.max(1, 100 - x.morale) * (x.attrs.ambition > 14 ? 1.5 : 1),
@@ -437,7 +437,7 @@ const TEMPLATES: IncidentTemplate[] = [
     pauses: true,
     ttlDays: 1,
     baseWeight: 0.08,
-    weightModifier: (c) => 1 + (60 - c.state.school.reputation.parentRelations) / 60,
+    weightModifier: (c) => 1 + (60 - (c.state.school?.reputation.parentRelations ?? 50)) / 60,
     generate: (_c) => {
       return {
         title: "Local press: 'comment please?'",
@@ -907,7 +907,7 @@ const TEMPLATES: IncidentTemplate[] = [
     pauses: true,
     ttlDays: 1,
     baseWeight: 0.04,
-    weightModifier: (c) => (c.state.school.yearsInspected >= 3 ? 4 : 1),
+    weightModifier: (c) => ((c.state.school?.yearsInspected ?? 0) >= 3 ? 4 : 1),
     generate: (_c) => {
       return {
         title: "The Inspectorate has called",

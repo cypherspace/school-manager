@@ -23,6 +23,9 @@ const view: SetsViewState = {
 
 export function renderSets(): HTMLElement {
   const s = store.require();
+  if (!s.school) {
+    return h("div", {}, h("p", { class: "muted" }, "Unemployed — no sets to show."));
+  }
 
   const policy = s.school.settingPolicy[view.subject];
   const policySummary = policy.isSetted
@@ -69,7 +72,7 @@ export function renderSets(): HTMLElement {
     .filter((g) => g.subject === view.subject && g.yearGroup === view.year)
     .sort((a, b) => a.setNumber - b.setNumber);
 
-  const delegationBanner = s.school.allocationDelegation.thisYear === "head"
+  const delegationBanner = s.school!.allocationDelegation.thisYear === "head"
     ? h(
         "div",
         { class: "banner" },

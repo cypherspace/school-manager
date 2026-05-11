@@ -64,9 +64,9 @@ export function renderResults(): HTMLElement {
     ".",
   );
 
-  const nextChoice = s.school.allocationDelegation.nextYear;
+  const nextChoice = s.school?.allocationDelegation.nextYear ?? "deputy";
   const setNext = (v: AllocationDecider): void => {
-    s.school.allocationDelegation.nextYear = v;
+    if (s.school) s.school.allocationDelegation.nextYear = v;
     autosave(s);
     store.emit();
   };
@@ -124,7 +124,7 @@ export function renderResults(): HTMLElement {
         class: "primary",
         onclick: () => {
           const wantsManual =
-            s.school.allocationDelegation.nextYear === "head";
+            s.school?.allocationDelegation.nextYear === "head";
           advanceToNextYear(s);
           autosave(s);
           if (wantsManual) {

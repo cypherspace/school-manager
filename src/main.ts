@@ -9,8 +9,14 @@ import { renderResults } from "./ui/views/results.ts";
 import { renderRules } from "./ui/views/rules.ts";
 import { renderSets } from "./ui/views/timetable/sets.ts";
 import { renderPlaceholder } from "./ui/views/placeholders.ts";
+import { renderCV } from "./ui/views/career/cv.ts";
+import { renderSectorView } from "./ui/views/career/sector.ts";
+import { renderVacancies } from "./ui/views/career/vacancies.ts";
+import { renderApplications } from "./ui/views/career/applications.ts";
+import { renderInterview } from "./ui/views/career/interview.ts";
+import { renderFormerSchool } from "./ui/views/career/formerSchool.ts";
 import { continueUntilInterrupt, stepDay } from "./sim/engine.ts";
-import { SUB_TABS, TOP_TABS, tabState } from "./ui/tabs.ts";
+import { SUB_TABS, TOP_TABS, UNEMPLOYED_TABS, tabState } from "./ui/tabs.ts";
 import {
   SaveVersionError,
   autosave,
@@ -75,16 +81,19 @@ function renderApp(): HTMLElement {
 let dashboardExpanded = false;
 function renderDashboardStrip(): HTMLElement {
   const s = store.require();
+  const sch = s.school;
   const summary = h(
     "div",
     { class: "dashboard-strip" },
-    h("span", {}, h("strong", {}, s.school.name)),
-    h("span", { class: "dim" }, s.school.inspectionGrade),
-    h("span", { class: "dim" }, `${s.school.pupilIds.length} pupils · ${s.school.staffIds.length} staff`),
+    h("span", {}, h("strong", {}, sch ? sch.name : "(no school)")),
+    h("span", { class: "dim" }, sch ? sch.inspectionGrade : s.mode),
+    h("span", { class: "dim" }, sch ? `${sch.pupilIds.length} pupils · ${sch.staffIds.length} staff` : "—"),
     h(
       "span",
       { class: "dim" },
-      `Reserves £${s.school.reserves.toLocaleString()} · Day ${s.dayIndex}`,
+      sch
+        ? `Reserves £${sch.reserves.toLocaleString()} · Day ${s.dayIndex}`
+        : `Day ${s.dayIndex}`,
     ),
     h(
       "button",
@@ -108,17 +117,20 @@ function renderDashboardStrip(): HTMLElement {
 
 function renderHeader(): HTMLElement {
   const s = store.require();
+  const sch = s.school;
   return h(
     "div",
     { class: "header" },
     h(
       "div",
       {},
-      h("h1", {}, s.school.name),
+      h("h1", {}, sch ? sch.name : `${s.headteacher.givenName} ${s.headteacher.surname}`),
       h(
         "div",
         { class: "crest" },
-        `${s.school.town} · ${s.headteacher.givenName} ${s.headteacher.surname}, Headteacher${s.ironman ? " · IRONMAN" : ""}`,
+        sch
+          ? `${sch.town} · ${s.headteacher.givenName} ${s.headteacher.surname}, Headteacher${s.ironman ? " · IRONMAN" : ""}`
+          : `Currently unemployed${s.ironman ? " · IRONMAN" : ""}`,
       ),
     ),
     h(
@@ -243,10 +255,16 @@ function renderToolbar(): HTMLElement {
 }
 
 function renderTabs(): HTMLElement {
+  const s = store.require();
+  const tabs = s.mode === "in-post" && s.school ? TOP_TABS : UNEMPLOYED_TABS;
+  // Force the active tab onto something valid in the unemployed shell.
+  if (s.mode !== "in-post" && tabState.top !== "career") {
+    tabState.top = "career";
+  }
   return h(
     "div",
     { class: "tabs" },
-    ...TOP_TABS.map(({ key, label }) =>
+    ...tabs.map(({ key, label }) =>
       h(
         "button",
         {
@@ -257,8 +275,8 @@ function renderTabs(): HTMLElement {
           },
         },
         label,
-        key === "inbox" && store.require().inbox.length > 0
-          ? h("span", { class: "tag", style: { marginLeft: "6px" } }, String(store.require().inbox.length))
+        key === "inbox" && s.inbox.length > 0
+          ? h("span", { class: "tag", style: { marginLeft: "6px" } }, String(s.inbox.length))
           : null,
       ),
     ),
@@ -296,25 +314,32 @@ function renderActiveTab(): HTMLElement {
     case "timetable":
       if (sub === "sets") return renderSets();
       if (sub === "allocations")
-        return renderPlaceholder("Staff allocations", "Phase 3+", "Per-staff timetable view will land with the Phase 3 schedule layer.");
+        return renderPlaceholder("Staff allocations", "Phase 4+", "Per-staff timetable view will land with the Phase 4 schedule layer.");
       if (sub === "break")
-        return renderPlaceholder("Break duties", "Phase 3+", "Duty rota editor — coming soon.");
+        return renderPlaceholder("Break duties", "Phase 4+", "Duty rota editor — coming soon.");
       if (sub === "lunch")
-        return renderPlaceholder("Lunch duties", "Phase 3+", "Duty rota editor — coming soon.");
+        return renderPlaceholder("Lunch duties", "Phase 4+", "Duty rota editor — coming soon.");
       return renderSets();
     case "discipline":
       return renderRules();
     case "staff":
       if (sub === "leadership")
-        return renderPlaceholder("Leadership team", "Phase 3+", "Deputies and assistant heads' portfolios + appraisal cycle.");
+        return renderPlaceholder("Leadership team", "Phase 4+", "Deputies and assistant heads' portfolios + appraisal cycle.");
       return renderStaff();
     case "pupils":
       return renderPupils();
     case "results":
       if (sub === "history") return renderResultsHistory();
       return renderResults();
+    case "career":
+      if (sub === "sector") return renderSectorView();
+      if (sub === "vacancies") return renderVacancies();
+      if (sub === "applications") return renderApplications();
+      if (sub === "interview") return renderInterview();
+      if (sub === "former") return renderFormerSchool();
+      return renderCV();
     case "governors":
-      return renderPlaceholder("Governors", "Phase 3+", "Term-end meetings, chair relationship, audit cycle.");
+      return renderPlaceholder("Governors", "Phase 4+", "Term-end meetings, chair relationship, audit cycle.");
     case "extra":
       return renderPlaceholder("Extra-curricular", "Phase 4+", "Clubs, trips, sports, music — and the staff time they devour.");
   }

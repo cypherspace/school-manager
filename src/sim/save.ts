@@ -7,7 +7,7 @@ import type { GameState } from "./types.ts";
 
 const SAVE_KEY_PREFIX = "school-manager:save:";
 const AUTOSAVE_KEY = "school-manager:autosave";
-const VERSION = 2;
+const VERSION = 3;
 
 interface SaveEnvelope {
   version: number;
@@ -32,7 +32,7 @@ export class SaveVersionError extends Error {
   constructor(found: unknown) {
     super(
       `Save was written by an earlier version of the game (v${String(found)}) and can't be opened by v${VERSION}. ` +
-        `Start a new career — Phase 2 changed the data model.`,
+        `Start a new career — Phase 3 changed the data model.`,
     );
     this.name = "SaveVersionError";
     this.found = found;

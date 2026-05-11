@@ -5,37 +5,41 @@ import { dayInfo, formatDate } from "../../sim/calendar.ts";
 export function renderDashboard(): HTMLElement {
   const s = store.require();
   const info = dayInfo(s.schoolYearStart, s.dayIndex);
+  const school = s.school;
+  if (!school) {
+    return h("div", {}, h("p", { class: "muted" }, "Currently unemployed. See Career."));
+  }
 
   const repPanel = h(
     "div",
     { class: "panel" },
     h("h2", {}, "Reputation"),
-    repRow("Discipline", s.school.reputation.discipline),
-    repRow("Pastoral", s.school.reputation.pastoral),
-    repRow("Parent relations", s.school.reputation.parentRelations),
-    repRow("Staff morale", s.school.reputation.staffMorale),
-    repRow("Governor relations", s.school.reputation.governorRelations),
+    repRow("Discipline", school.reputation.discipline),
+    repRow("Pastoral", school.reputation.pastoral),
+    repRow("Parent relations", school.reputation.parentRelations),
+    repRow("Staff morale", school.reputation.staffMorale),
+    repRow("Governor relations", school.reputation.governorRelations),
   );
 
   const schoolPanel = h(
     "div",
     { class: "panel" },
-    h("h2", {}, s.school.name),
-    kv("Town", s.school.town),
-    kv("Type", titleCase(s.school.type)),
-    kv("Pupils", String(s.school.pupilIds.length)),
-    kv("Staff", String(s.school.staffIds.length)),
-    kv("Capacity", String(s.school.capacity)),
-    kv("Last inspection grade", s.school.inspectionGrade),
-    kv("Years since inspection", String(s.school.yearsInspected)),
+    h("h2", {}, school.name),
+    kv("Town", school.town),
+    kv("Type", titleCase(school.type)),
+    kv("Pupils", String(school.pupilIds.length)),
+    kv("Staff", String(school.staffIds.length)),
+    kv("Capacity", String(school.capacity)),
+    kv("Last inspection grade", school.inspectionGrade),
+    kv("Years since inspection", String(school.yearsInspected)),
   );
 
   const moneyPanel = h(
     "div",
     { class: "panel" },
     h("h2", {}, "Money & calendar"),
-    kv("Reserves", "£" + s.school.reserves.toLocaleString()),
-    kv("Annual budget", "£" + s.school.annualBudget.toLocaleString()),
+    kv("Reserves", "£" + school.reserves.toLocaleString()),
+    kv("Annual budget", "£" + school.annualBudget.toLocaleString()),
     kv("Date", formatDate(info.date)),
     kv("Term", info.inTerm ? `${info.termLabel} — half-term ${info.halfTerm}` : "Holiday / weekend"),
     kv("School year", info.schoolYearLabel),

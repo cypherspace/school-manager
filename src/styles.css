@@ -309,3 +309,73 @@ details summary { cursor: pointer; }
 .sparkline { display: inline-block; vertical-align: middle; }
 .sparkline svg { display: block; }
 
+/* Character creation ------------------------------------------------------- */
+
+.start-screen .panel { background: var(--bg-alt); border-color: var(--border); padding: 10px 12px; margin-top: 12px; }
+.bg-row {
+  display: block;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  margin: 4px 0;
+  background: var(--panel);
+  cursor: pointer;
+}
+.bg-row.active { background: var(--accent-soft); border-color: var(--accent); }
+
+.perk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.perk-card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.perk-card.active { background: var(--accent-soft); border-color: var(--accent); }
+.perk-card:hover { background: var(--accent-soft); }
+
+.slate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.slate-card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.slate-card.active { background: var(--accent-soft); border-color: var(--accent); }
+
+/* Career views ------------------------------------------------------------ */
+
+.sector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.sector-card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.sector-card.active { background: var(--accent-soft); border-color: var(--accent); }
+
+.vacancy-row { padding: 10px 12px; }
+.vacancy-row.out-of-reach { opacity: 0.7; }
+
+.interview-modal { padding: 8px 0; }
+.interview-question { padding: 10px 12px; }
+.interview-choices button {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  cursor: pointer;
+  width: 100%;
+  margin: 2px 0;
+  text-align: left;
+}
+.interview-choices button:hover { background: var(--accent-soft); }
+.interview-choices button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+

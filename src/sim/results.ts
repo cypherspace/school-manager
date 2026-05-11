@@ -15,6 +15,13 @@ import {
   assignTeachersToGroups,
   generatePupil,
 } from "./generators.ts";
+import {
+  applyExpectationsCheck,
+  applyInspectionReputation,
+  applyResultsReputation,
+  applyTenureLength,
+} from "./reputation.ts";
+import { buildYearInReview } from "./yearInReview.ts";
 
 function meanAttainment(attainment: Record<Subject, number>): number {
   const vals = Object.values(attainment);
@@ -22,6 +29,9 @@ function meanAttainment(attainment: Record<Subject, number>): number {
 }
 
 export function calculateYearEndResults(state: GameState): ResultsReport {
+  if (!state.school) {
+    return emptyReport(state);
+  }
   const pupils = Object.values(state.pupils);
   const perSubjectTotals: Record<Subject, { sum: number; n: number }> = {} as never;
   for (const s of ALL_SUBJECTS) perSubjectTotals[s] = { sum: 0, n: 0 };
@@ -127,18 +137,48 @@ function buildResultsNotes(
   return notes;
 }
 
+function emptyReport(state: GameState): ResultsReport {
+  const perSubjectAverage = {} as Record<Subject, number>;
+  for (const s of ALL_SUBJECTS) perSubjectAverage[s] = 0;
+  const perYearAverage = {} as Record<YearGroup, number>;
+  for (const y of YEAR_GROUPS) perYearAverage[y] = 0;
+  return {
+    schoolYearLabel: `${state.schoolYearStart}/${String(state.schoolYearStart + 1).slice(-2)}`,
+    endYear: state.schoolYearStart + 1,
+    perSubjectAverage,
+    perYearAverage,
+    overallAverage: 0,
+    passRate: 0,
+    topPerformers: [],
+    concernPupils: [],
+    inspectionGradeImpact: 0,
+    budgetDelta: 0,
+    notes: ["No active school — unemployed year."],
+  };
+}
+
 // Year rollover: apply results consequences, age pupils, send Y11 to alumni
 // (Phase 4 will give alumni a real life), intake new Y7s, reset annual counters.
 export function rolloverYear(state: GameState): void {
+  if (!state.school) return;
   const lastReport = state.results[state.results.length - 1];
   if (lastReport) {
     state.school.reserves += lastReport.budgetDelta;
     // Inspection grade can move on big swings.
     const ladder = ["Inadequate", "Requires Improvement", "Good", "Outstanding"] as const;
     let idx = ladder.indexOf(state.school.inspectionGrade);
+    const oldIdx = idx;
     if (lastReport.inspectionGradeImpact >= 3 && idx < 3) idx += 1;
     if (lastReport.inspectionGradeImpact <= -3 && idx > 0) idx -= 1;
     state.school.inspectionGrade = ladder[idx]!;
+    // Career reputation: results + inspection swings + tenure + expectations.
+    applyResultsReputation(state, lastReport);
+    applyInspectionReputation(state, idx - oldIdx);
+    applyTenureLength(state);
+    applyExpectationsCheck(state, lastReport);
+    // Build year-in-review based on snapshot vs current.
+    const yr = buildYearInReview(state, lastReport);
+    state.headteacher.yearInReview.push(yr);
   }
 
   // Move Y11 out, age everyone up.

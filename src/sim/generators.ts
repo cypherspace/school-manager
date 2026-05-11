@@ -3,12 +3,17 @@ import {
   ALL_SUBJECTS,
   YEAR_GROUPS,
   type AllocationStyle,
+  type BackgroundArchetype,
   type GameState,
   type Headteacher,
   type ID,
+  type PerkId,
   type Pupil,
   type ReputationAxes,
   type School,
+  type SchoolArchetype,
+  type SectorSchool,
+  type Sector,
   type SettingPolicy,
   type Staff,
   type StaffRole,
@@ -17,6 +22,8 @@ import {
   type YearGroup,
 } from "./types.ts";
 import { firstName, schoolName, surname, townName } from "./names.ts";
+import { BACKGROUNDS, applyPerks } from "./perks.ts";
+import { generateSector } from "./sector.ts";
 
 let _idCounter = 0;
 export function makeId(prefix: string, rng: RNG): ID {
@@ -382,6 +389,7 @@ export function assignPupilsToGroupsForYear(
 ): void {
   const pupilsInYear = Object.values(state.pupils).filter((p) => p.yearGroup === year);
   if (pupilsInYear.length === 0) return;
+  if (!state.school) return;
   for (const subject of ALL_SUBJECTS) {
     const policy = state.school.settingPolicy[subject];
     const isSettedAtYear = policy.isSetted &&
@@ -513,39 +521,46 @@ export interface NewGameOptions {
   ironman: boolean;
   schoolYearStart?: number;
   headteacherAge?: number;
-  startingReputation?: number; // 0-100
+  headteacherName?: { given: string; surname: string };
+  headteacherSex?: "f" | "m";
+  background?: BackgroundArchetype;
+  perks?: PerkId[];
+  startingReputation?: number; // 0-100, optional override
+  // Entry-route: pick a specific SectorSchool from the pre-generated sector,
+  // or null to start unemployed. If undefined and no sector provided, falls
+  // back to the legacy single-school generator.
+  entrySectorSchoolId?: ID | null;
+  sector?: Sector;
 }
 
-export function generateNewGame(opts: NewGameOptions): GameState {
+// Generate a fresh School record for a SectorSchool seed. The school's id
+// matches the SectorSchool id so the player heads the sector school. Pupils
+// and staff are produced in bulk and returned via the result so the caller
+// (generateNewGame / moveIntoSchool) can hydrate them into the live game
+// state.
+export function generateSchoolFromSector(seed: string, ss: SectorSchool): School {
   resetIdCounter();
-  const rng = new RNG(opts.seed);
-  const schoolYearStart = opts.schoolYearStart ?? new Date().getUTCFullYear();
-  const startingRep = opts.startingReputation ?? 50;
-
-  // Pupils — full roster across Y7-Y11.
+  const rng = new RNG(`${seed}:school:${ss.id}`);
+  const pupilsPerYear = Math.max(60, Math.floor(ss.capacity / 5));
+  const cohort = pupilsPerYear * 5;
   const pupils: Record<ID, Pupil> = {};
   const pupilIds: ID[] = [];
   for (const yg of YEAR_GROUPS) {
-    for (let i = 0; i < PUPILS_PER_YEAR; i++) {
-      const p = generatePupil(rng, yg, schoolYearStart);
+    for (let i = 0; i < pupilsPerYear; i++) {
+      const p = generatePupil(rng, yg, new Date().getUTCFullYear());
       pupils[p.id] = p;
       pupilIds.push(p.id);
     }
   }
-
-  // Staff — eight HoDs, ~3 teachers per subject, plus SLT/TAs/pastoral.
   const staff: Record<ID, Staff> = {};
   const staffIds: ID[] = [];
   const push = (s: Staff): void => {
     staff[s.id] = s;
     staffIds.push(s.id);
   };
-
-  // Senior leadership: head's deputies and assistant heads.
   push(generateStaff(rng, "Senior Leader", null));
   push(generateStaff(rng, "Senior Leader", null));
   push(generateStaff(rng, "Senior Leader", null));
-
   for (const subj of ALL_SUBJECTS) {
     push(generateStaff(rng, "Head of Department", subj));
     const teacherCount = subj === "English" || subj === "Mathematics" || subj === "Science" ? 5 : 3;
@@ -555,12 +570,233 @@ export function generateNewGame(opts: NewGameOptions): GameState {
   }
   for (let i = 0; i < 8; i++) push(generateStaff(rng, "Teaching Assistant", null));
   for (let i = 0; i < 3; i++) push(generateStaff(rng, "Pastoral", null));
+  const baseRep = 25 + ss.reputationTier * 10;
+  const school: School = {
+    id: ss.id,
+    name: ss.name,
+    town: ss.town,
+    type: ss.type,
+    archetype: ss.archetype,
+    capacity: cohort,
+    pupilIds,
+    staffIds,
+    reserves: archetypeReserves(ss.archetype),
+    annualBudget: Math.round(cohort * 5800),
+    reputation: defaultReputation(baseRep),
+    inspectionGrade: ss.currentGrade,
+    yearsInspected: rng.int(0, 4),
+    rooms: Math.round(cohort * 0.05) + 20,
+    maintenanceBacklog: archetypeMaintenance(ss.archetype),
+    settingPolicy: generateInitialSettingPolicy(rng),
+    allocationDelegation: { thisYear: "deputy", nextYear: "deputy" },
+    pupilsBag: pupils,
+    staffBag: staff,
+  };
+  return school;
+}
 
+function archetypeReserves(a: SchoolArchetype): number {
+  switch (a) {
+    case "elite-selective":
+      return 720000;
+    case "struggling-academy":
+      return 110000;
+    case "faith":
+      return 420000;
+    case "rural-small":
+      return 240000;
+    case "average-state":
+    default:
+      return 380000;
+  }
+}
+
+function archetypeMaintenance(a: SchoolArchetype): number {
+  switch (a) {
+    case "elite-selective":
+      return 12;
+    case "struggling-academy":
+      return 68;
+    case "rural-small":
+      return 48;
+    case "faith":
+      return 32;
+    case "average-state":
+    default:
+      return 35;
+  }
+}
+
+export function generateNewGame(opts: NewGameOptions): GameState {
+  resetIdCounter();
+  const rng = new RNG(opts.seed);
+  const schoolYearStart = opts.schoolYearStart ?? new Date().getUTCFullYear();
+
+  // Build headteacher first — character creation drives starting reputation.
+  const background = opts.background ?? "career-teacher";
+  const bg = BACKGROUNDS[background];
+  const sex: "f" | "m" = opts.headteacherSex ?? (rng.chance(0.5) ? "f" : "m");
+  const startingPub = opts.startingReputation ?? bg.startingPublicRep;
+  const startingPriv = opts.startingReputation ?? bg.startingPrivateRep;
+  const headteacher: Headteacher = {
+    id: makeId("ht", rng),
+    givenName: opts.headteacherName?.given ?? firstName(rng, sex),
+    surname: opts.headteacherName?.surname ?? surname(rng),
+    age: opts.headteacherAge ?? 42,
+    sex,
+    reputationPublic: startingPub,
+    reputationPrivate: startingPriv,
+    yearsAsHead: 0,
+    background,
+    perks: opts.perks ?? [],
+    attrs: { ...bg.attrs },
+    careerHistory: [],
+    currentSchoolId: null,
+    unemployedSinceYear: null,
+    yearInReview: [],
+    totalSackings: 0,
+    inadequateStreak: 0,
+    lastYearReputation: { public: startingPub, private: startingPriv },
+  };
+  applyPerks(headteacher);
+
+  const state: GameState = {
+    seedLabel: opts.seed,
+    rngState: rng.getState(),
+    dayIndex: 0,
+    schoolYearStart,
+    ironman: opts.ironman,
+    mode: "unemployed",
+    school: null,
+    headteacher,
+    pupils: {},
+    staff: {},
+    groups: {},
+    inbox: [],
+    resolvedInbox: [],
+    interruption: {
+      pauseOnCritical: true,
+      pauseOnSerious: true,
+      pauseOnRoutine: false,
+      pauseOnReportingPoint: true,
+      pauseOnTermBoundary: true,
+      pauseOnInboxSize: 25,
+    },
+    history: [],
+    results: [],
+    sector: opts.sector ?? generateSector(new RNG(`${opts.seed}:sector:initial`)),
+    formerSchools: {},
+    gameOver: false,
+  };
+
+  // If an entry sector school was nominated, hire the player there and
+  // populate the live dictionaries.
+  if (opts.entrySectorSchoolId && state.sector.schools[opts.entrySectorSchoolId]) {
+    hireAtSectorSchool(state, opts.entrySectorSchoolId);
+  } else if (Object.keys(state.sector.schools).length > 0) {
+    // Starting unemployed: seed an initial pending vacancy slate by clearing
+    // out a handful of NPC heads + immediately running the post-christmas
+    // wave so the player has something to apply to.
+    seedInitialUnemployedVacancies(state);
+  }
+
+  state.rngState = rng.getState();
+  return state;
+}
+
+function seedInitialUnemployedVacancies(state: GameState): void {
+  const rng = new RNG(`${state.seedLabel}:seed-vacancies`);
+  const allSchools = Object.values(state.sector.schools);
+  // Clear ~5 NPC heads to create vacancies.
+  const candidates = [...allSchools]
+    .sort(() => rng.next() - 0.5)
+    .slice(0, 5);
+  for (const ss of candidates) {
+    if (!ss.headId) continue;
+    delete state.sector.sectorHeads[ss.headId];
+    ss.headId = null;
+    ss.yearsSinceTurnover = 0;
+  }
+  // Fire post-christmas wave immediately to surface vacancies.
+  // (Deferred until career.ts to avoid an import cycle — caller handles it.)
+}
+
+// Mount the player into a sector school. Shared between game-start and
+// in-career moves. Does NOT archive the current school — caller should
+// handle that.
+export function hireAtSectorSchool(state: GameState, sectorSchoolId: ID): void {
+  const ss = state.sector.schools[sectorSchoolId];
+  if (!ss) return;
+  const school = generateSchoolFromSector(state.seedLabel, ss);
+  state.school = school;
+  state.mode = "in-post";
+  state.pupils = school.pupilsBag ? { ...school.pupilsBag } : {};
+  state.staff = school.staffBag ? { ...school.staffBag } : {};
+  // Clear bags now that the live state owns the data — keeps save size down.
+  delete school.pupilsBag;
+  delete school.staffBag;
+  state.groups = {};
+  state.dayIndex = 0;
+  const rng = new RNG(`${state.seedLabel}:initial-groups:${school.id}`);
+  for (const yg of YEAR_GROUPS) {
+    assignPupilsToGroupsForYear(rng, state, yg);
+  }
+  assignTeachersToGroups(state);
+  ss.headId = state.headteacher.id;
+  ss.yearsSinceTurnover = 0;
+  state.headteacher.currentSchoolId = school.id;
+  state.headteacher.unemployedSinceYear = null;
+  state.headteacher.careerHistory.push({
+    schoolId: school.id,
+    schoolName: school.name,
+    town: school.town,
+    type: school.type,
+    startYear: state.schoolYearStart,
+    endYear: null,
+    finalGrade: null,
+    headlineResultsAvg: null,
+    departureReason: "current",
+  });
+}
+
+// Legacy single-school helper, kept as a thin wrapper so anything still
+// calling generateNewGame without sector setup remains usable in tests.
+export function generateLegacySingleSchoolGame(opts: NewGameOptions): GameState {
+  resetIdCounter();
+  const rng = new RNG(opts.seed);
+  const schoolYearStart = opts.schoolYearStart ?? new Date().getUTCFullYear();
+  const startingRep = opts.startingReputation ?? 50;
+  const pupils: Record<ID, Pupil> = {};
+  const pupilIds: ID[] = [];
+  for (const yg of YEAR_GROUPS) {
+    for (let i = 0; i < PUPILS_PER_YEAR; i++) {
+      const p = generatePupil(rng, yg, schoolYearStart);
+      pupils[p.id] = p;
+      pupilIds.push(p.id);
+    }
+  }
+  const staff: Record<ID, Staff> = {};
+  const staffIds: ID[] = [];
+  const push = (s: Staff): void => {
+    staff[s.id] = s;
+    staffIds.push(s.id);
+  };
+  push(generateStaff(rng, "Senior Leader", null));
+  push(generateStaff(rng, "Senior Leader", null));
+  push(generateStaff(rng, "Senior Leader", null));
+  for (const subj of ALL_SUBJECTS) {
+    push(generateStaff(rng, "Head of Department", subj));
+    const teacherCount = subj === "English" || subj === "Mathematics" || subj === "Science" ? 5 : 3;
+    for (let i = 0; i < teacherCount; i++) push(generateStaff(rng, "Teacher", subj));
+  }
+  for (let i = 0; i < 8; i++) push(generateStaff(rng, "Teaching Assistant", null));
+  for (let i = 0; i < 3; i++) push(generateStaff(rng, "Pastoral", null));
   const school: School = {
     id: makeId("sc", rng),
     name: schoolName(rng),
     town: townName(rng),
     type: "state",
+    archetype: "average-state",
     capacity: PUPILS_PER_YEAR * 5,
     pupilIds,
     staffIds,
@@ -572,27 +808,47 @@ export function generateNewGame(opts: NewGameOptions): GameState {
     rooms: 60,
     maintenanceBacklog: 35,
     settingPolicy: generateInitialSettingPolicy(rng),
-    // Player inherits a school where the previous Head delegated allocation
-    // to a deputy. They can flip "next year" on Results Day.
     allocationDelegation: { thisYear: "deputy", nextYear: "deputy" },
   };
-
   const headteacher: Headteacher = {
     id: makeId("ht", rng),
     givenName: firstName(rng, rng.chance(0.5) ? "f" : "m"),
     surname: surname(rng),
     age: opts.headteacherAge ?? 42,
+    sex: rng.chance(0.5) ? "f" : "m",
     reputationPublic: startingRep,
     reputationPrivate: Math.round(startingRep + rng.int(-8, 8)),
     yearsAsHead: 0,
+    background: "career-teacher",
+    perks: [],
+    attrs: { ...BACKGROUNDS["career-teacher"].attrs },
+    careerHistory: [
+      {
+        schoolId: school.id,
+        schoolName: school.name,
+        town: school.town,
+        type: school.type,
+        startYear: schoolYearStart,
+        endYear: null,
+        finalGrade: null,
+        headlineResultsAvg: null,
+        departureReason: "current",
+      },
+    ],
+    currentSchoolId: school.id,
+    unemployedSinceYear: null,
+    yearInReview: [],
+    totalSackings: 0,
+    inadequateStreak: 0,
+    lastYearReputation: { public: startingRep, private: startingRep },
   };
-
   const state: GameState = {
     seedLabel: opts.seed,
     rngState: rng.getState(),
     dayIndex: 0,
     schoolYearStart,
     ironman: opts.ironman,
+    mode: "in-post",
     school,
     headteacher,
     pupils,
@@ -610,17 +866,23 @@ export function generateNewGame(opts: NewGameOptions): GameState {
     },
     history: [],
     results: [],
+    sector: {
+      schools: {},
+      sectorHeads: {},
+      vacancies: {},
+      applications: {},
+      memorablePupils: {},
+      trashTalk: [],
+      lastWaveFiredYear: {},
+    },
+    formerSchools: {},
     gameOver: false,
   };
-
-  // Populate teaching groups + assign teachers using the just-built policy.
   for (const yg of YEAR_GROUPS) {
     assignPupilsToGroupsForYear(rng, state, yg);
   }
   assignTeachersToGroups(state);
-  // Sync rngState since generation consumed more random values.
   state.rngState = rng.getState();
-
   return state;
 }
 
