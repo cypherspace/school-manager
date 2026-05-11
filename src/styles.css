@@ -1,0 +1,218 @@
+/* School Manager — phase 1 styling. Dense, spreadsheety, slightly clerical. */
+
+:root {
+  --bg: #f4f1ea;
+  --bg-alt: #ebe6d8;
+  --panel: #ffffff;
+  --border: #cdc7b6;
+  --border-strong: #8c8676;
+  --ink: #1f1d18;
+  --ink-soft: #4a463c;
+  --accent: #5c3a21;
+  --accent-soft: #f0e3d4;
+  --good: #2f6f3a;
+  --bad: #9b2222;
+  --warn: #b66a0a;
+  --critical: #6b0d0d;
+  --serious: #944005;
+  --routine: #5c5a4d;
+  --trivial: #8c8676;
+  font-family: "Iowan Old Style", "Charter", "Georgia", serif;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+body { min-height: 100vh; }
+
+#app { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+a, a:visited { color: var(--accent); }
+
+button {
+  font-family: inherit;
+  font-size: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 6px 12px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+button:hover { background: var(--accent-soft); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+button.primary:hover { filter: brightness(1.1); }
+button.danger { color: var(--bad); }
+
+h1, h2, h3 { font-weight: 600; letter-spacing: 0.01em; }
+h1 { font-size: 22px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 8px; }
+h3 { font-size: 15px; margin: 0 0 6px; }
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-strong);
+  padding: 0 0 10px;
+  margin-bottom: 12px;
+}
+.header .crest { font-style: italic; color: var(--ink-soft); }
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-strong);
+  margin: 8px 0 12px;
+}
+.tab {
+  padding: 6px 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: var(--ink-soft);
+}
+.tab.active {
+  background: var(--panel);
+  border-color: var(--border-strong);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 2px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+.grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+
+.kv { display: flex; justify-content: space-between; padding: 2px 0; }
+.kv .k { color: var(--ink-soft); }
+.kv .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.bar {
+  height: 8px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  position: relative;
+  margin-top: 2px;
+}
+.bar > span { display: block; height: 100%; background: var(--accent); }
+
+.dim { color: var(--ink-soft); }
+
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+table th, table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+table th { background: var(--bg-alt); position: sticky; top: 0; }
+table tr:hover { background: var(--accent-soft); }
+table input[type=text] { width: 100%; }
+.scroll { max-height: 520px; overflow: auto; border: 1px solid var(--border); }
+
+.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+
+.tag {
+  display: inline-block;
+  padding: 0 6px;
+  margin-right: 4px;
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  border-radius: 2px;
+  background: var(--bg-alt);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tag.critical { color: #fff; background: var(--critical); border-color: var(--critical); }
+.tag.serious { color: #fff; background: var(--serious); border-color: var(--serious); }
+.tag.routine { color: var(--ink); background: var(--bg-alt); }
+.tag.trivial { color: var(--ink-soft); background: var(--bg-alt); }
+.tag.flag { color: var(--bad); border-color: var(--bad); background: #fff; }
+
+.incident {
+  border-left: 4px solid var(--border-strong);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--panel);
+}
+.incident.critical { border-left-color: var(--critical); }
+.incident.serious { border-left-color: var(--serious); }
+.incident.routine { border-left-color: var(--routine); }
+.incident.trivial { border-left-color: var(--trivial); }
+.incident h3 { margin: 0 0 4px; }
+.incident .body { color: var(--ink-soft); margin: 4px 0 10px; }
+.incident .choices { display: flex; flex-direction: column; gap: 4px; }
+.incident .choices button { text-align: left; }
+
+.history {
+  font-size: 12px;
+  color: var(--ink-soft);
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  background: var(--panel);
+}
+.history .day { font-weight: 600; color: var(--ink); margin-right: 6px; }
+
+.banner {
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.start-screen {
+  max-width: 540px;
+  margin: 48px auto;
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+}
+.start-screen label { display: block; margin: 8px 0 2px; color: var(--ink-soft); }
+.start-screen input, .start-screen select {
+  width: 100%; padding: 6px 8px; font-family: inherit; font-size: 14px;
+  border: 1px solid var(--border-strong); background: var(--bg);
+}
+.start-screen .row { display: flex; gap: 12px; }
+.start-screen .row > * { flex: 1; }
+.start-screen .actions { margin-top: 18px; display: flex; gap: 8px; justify-content: flex-end; }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.toolbar .spacer { flex: 1; }
+
+.muted { color: var(--ink-soft); font-style: italic; }
+
+input[type=search], input[type=text].search {
+  font-family: inherit; font-size: 13px; padding: 4px 8px;
+  border: 1px solid var(--border-strong); background: var(--bg);
+}
+
+details { background: var(--bg-alt); padding: 4px 8px; border: 1px solid var(--border); margin: 6px 0; }
+details summary { cursor: pointer; }

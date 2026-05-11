@@ -1,0 +1,22 @@
+{
+  "name": "school-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A long-career headteacher simulator. Phase 0 + Phase 1 vertical slice.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "sim": "tsx src/sim/headless.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4",
+    "tsx": "^4.19.2"
+  }
+}
