@@ -2,15 +2,18 @@ import { RNG } from "./rng.ts";
 import {
   ALL_SUBJECTS,
   YEAR_GROUPS,
+  type AllocationStyle,
   type GameState,
   type Headteacher,
   type ID,
   type Pupil,
   type ReputationAxes,
   type School,
+  type SettingPolicy,
   type Staff,
   type StaffRole,
   type Subject,
+  type TeachingGroup,
   type YearGroup,
 } from "./types.ts";
 import { firstName, schoolName, surname, townName } from "./names.ts";
@@ -98,6 +101,8 @@ export function generatePupil(rng: RNG, yearGroup: YearGroup, schoolYearStart: n
     parentalEngagement: Math.round(rng.bounded(55, 22, 0, 100)),
     flagged: false,
     notes: [],
+    groupBySubject: {},
+    progressHistory: [],
   };
 }
 
@@ -185,6 +190,15 @@ function scoreFromArchetype(rng: RNG, archetype: string): Staff["attrs"] {
   return a;
 }
 
+// Translate a HoD's attrs into a class-allocation strategy. Surfaced on the
+// Sets view so the player can see why the department's strongest sets land
+// where they do.
+export function deriveAllocationStyle(attrs: Staff["attrs"]): AllocationStyle {
+  if (attrs.ambition >= 14 && attrs.loyalty <= 10) return "careerist";
+  if (attrs.loyalty >= 14 && attrs.mentoring >= 13) return "collegiate";
+  return "balanced";
+}
+
 export function generateStaff(rng: RNG, role: StaffRole, subject: Subject | null): Staff {
   const sex: "f" | "m" = rng.chance(0.55) ? "f" : "m";
   const archetype = rng.pick(ARCHETYPES);
@@ -199,7 +213,8 @@ export function generateStaff(rng: RNG, role: StaffRole, subject: Subject | null
       ? Math.round(28000 + rng.int(0, 8000))
       : Math.round(salaryBase + rng.int(-3000, 6000));
 
-  return {
+  const attrs = scoreFromArchetype(rng, archetype.key);
+  const staff: Staff = {
     id: makeId("s", rng),
     givenName: firstName(rng, sex),
     surname: surname(rng),
@@ -210,7 +225,7 @@ export function generateStaff(rng: RNG, role: StaffRole, subject: Subject | null
     yearsAtSchool,
     yearsInProfession,
     salary,
-    attrs: scoreFromArchetype(rng, archetype.key),
+    attrs,
     hidden: {
       integrity: rng.int(4, 19),
       professionalism: rng.int(6, 19),
@@ -224,6 +239,269 @@ export function generateStaff(rng: RNG, role: StaffRole, subject: Subject | null
     performanceRating: Math.round(rng.bounded(60, 15, 10, 100)),
     flagged: false,
   };
+  if (role === "Head of Department") {
+    staff.allocationStyle = deriveAllocationStyle(attrs);
+  }
+  return staff;
+}
+
+// -----------------------------------------------------------------------------
+// Setting policy & teaching groups
+// -----------------------------------------------------------------------------
+
+// Build the initial per-subject setting policy left in place by the previous
+// Head. The probability ladder is nested — a school only considers setting a
+// less-common subject if it already sets the more-common ones. This matches
+// the realistic distribution of English secondary schools (Sutton Trust/EEF
+// surveys): nearly all set Maths, most also set English, half also set
+// Science, etc.
+export function generateInitialSettingPolicy(
+  rng: RNG,
+): Record<Subject, SettingPolicy> {
+  const policy = {} as Record<Subject, SettingPolicy>;
+  for (const s of ALL_SUBJECTS) policy[s] = { isSetted: false, introducedFromYear: null };
+
+  const pickYear = (options: ReadonlyArray<readonly [YearGroup, number]>): YearGroup => {
+    return rng.weighted(options);
+  };
+
+  // 1. Maths.
+  if (rng.chance(0.9)) {
+    policy.Mathematics = {
+      isSetted: true,
+      introducedFromYear: pickYear([[7, 0.6], [8, 0.4]]),
+    };
+  } else {
+    return policy;
+  }
+  // 2. English.
+  if (rng.chance(0.65)) {
+    policy.English = {
+      isSetted: true,
+      introducedFromYear: pickYear([[8, 0.5], [9, 0.5]]),
+    };
+  } else {
+    return policy;
+  }
+  // 3. Science.
+  if (rng.chance(0.75)) {
+    policy.Science = { isSetted: true, introducedFromYear: 9 };
+  } else {
+    return policy;
+  }
+  // 4. Languages.
+  if (rng.chance(0.45)) {
+    policy.Languages = {
+      isSetted: true,
+      introducedFromYear: pickYear([[9, 0.4], [10, 0.6]]),
+    };
+  } else {
+    return policy;
+  }
+  // 5. Humanities.
+  if (rng.chance(0.3)) {
+    policy.Humanities = { isSetted: true, introducedFromYear: 10 };
+  } else {
+    return policy;
+  }
+  // 6. Tech/PE/Arts — independent rolls at the bottom of the ladder.
+  if (rng.chance(0.15)) policy.Technology = { isSetted: true, introducedFromYear: 10 };
+  if (rng.chance(0.15)) policy.PE = { isSetted: true, introducedFromYear: 10 };
+  if (rng.chance(0.15)) policy.Arts = { isSetted: true, introducedFromYear: 10 };
+  return policy;
+}
+
+// Number of teaching groups for a given subject/year. Derived from cohort
+// size: aim for ~30 per group, clamped to [3, 6]. Maths gets +1 when setted
+// (smaller top + bottom sets is typical practice).
+export function computeGroupsForYear(
+  cohortSize: number,
+  subject: Subject,
+  isSettedAtYear: boolean,
+): number {
+  const base = Math.max(3, Math.min(6, Math.ceil(cohortSize / 30)));
+  if (subject === "Mathematics" && isSettedAtYear) {
+    return Math.min(6, base + 1);
+  }
+  return base;
+}
+
+// Build empty TeachingGroup records for a (subject × year), populating
+// state.groups. Returns the group ids in order (top set first when setted).
+function buildEmptyGroups(
+  rng: RNG,
+  state: GameState,
+  subject: Subject,
+  year: YearGroup,
+  count: number,
+  isSetted: boolean,
+): ID[] {
+  const ids: ID[] = [];
+  for (let i = 1; i <= count; i++) {
+    const g: TeachingGroup = {
+      id: makeId("g", rng),
+      subject,
+      yearGroup: year,
+      setNumber: i,
+      isSetted,
+      teacherIds: [],
+      pupilIds: [],
+    };
+    state.groups[g.id] = g;
+    ids.push(g.id);
+  }
+  return ids;
+}
+
+// Remove all groups for a given subject × year (and unlink pupils from them).
+function clearGroupsForYear(state: GameState, subject: Subject, year: YearGroup): void {
+  const toDelete: ID[] = [];
+  for (const g of Object.values(state.groups)) {
+    if (g.subject === subject && g.yearGroup === year) toDelete.push(g.id);
+  }
+  for (const gid of toDelete) delete state.groups[gid];
+  for (const p of Object.values(state.pupils)) {
+    if (p.yearGroup === year && p.groupBySubject[subject]) {
+      delete p.groupBySubject[subject];
+    }
+  }
+}
+
+// Rebuild teaching groups + populate them for a single (year). Called at
+// generation time for every year, and at rollover for years whose membership
+// changed. Setting state for the year is drawn from school.settingPolicy.
+//
+// When `populate` is false, the groups are still created (so the Sets view
+// has something to render) but pupils are left unassigned — used when the
+// player has chosen to allocate pupils to sets manually.
+export function assignPupilsToGroupsForYear(
+  rng: RNG,
+  state: GameState,
+  year: YearGroup,
+  populate = true,
+): void {
+  const pupilsInYear = Object.values(state.pupils).filter((p) => p.yearGroup === year);
+  if (pupilsInYear.length === 0) return;
+  for (const subject of ALL_SUBJECTS) {
+    const policy = state.school.settingPolicy[subject];
+    const isSettedAtYear = policy.isSetted &&
+      policy.introducedFromYear != null &&
+      year >= policy.introducedFromYear;
+    clearGroupsForYear(state, subject, year);
+    const groupCount = computeGroupsForYear(pupilsInYear.length, subject, isSettedAtYear);
+    const groupIds = buildEmptyGroups(rng, state, subject, year, groupCount, isSettedAtYear);
+
+    if (!populate) continue;
+
+    if (isSettedAtYear) {
+      // Stream pupils by per-subject ability into N sets, top down.
+      const sorted = [...pupilsInYear].sort(
+        (a, b) => b.ability[subject] - a.ability[subject],
+      );
+      const target = Math.ceil(sorted.length / groupCount);
+      for (let i = 0; i < sorted.length; i++) {
+        const setIdx = Math.min(groupCount - 1, Math.floor(i / target));
+        const gid = groupIds[setIdx]!;
+        state.groups[gid]!.pupilIds.push(sorted[i]!.id);
+        sorted[i]!.groupBySubject[subject] = gid;
+      }
+    } else {
+      // Mixed-ability: shuffle, then deal round-robin so SEND / high-behaviour
+      // outliers spread across groups instead of clustering.
+      const ordered = [...pupilsInYear].sort((a, b) => {
+        // Use behaviour propensity + SEND flag to pre-sort, then deal.
+        const ka = a.behaviourPropensity + (a.send ? 30 : 0);
+        const kb = b.behaviourPropensity + (b.send ? 30 : 0);
+        return kb - ka;
+      });
+      for (let i = 0; i < ordered.length; i++) {
+        // Snake-deal: 0,1,2,3, 3,2,1,0, 0,1,2,3 … flattens both ends.
+        const cycle = Math.floor(i / groupCount);
+        const inCycle = i % groupCount;
+        const setIdx = cycle % 2 === 0 ? inCycle : groupCount - 1 - inCycle;
+        const gid = groupIds[setIdx]!;
+        state.groups[gid]!.pupilIds.push(ordered[i]!.id);
+        ordered[i]!.groupBySubject[subject] = gid;
+      }
+    }
+  }
+}
+
+// Assign teachers to every TeachingGroup in the state. HoDs pick first using
+// their AllocationStyle; remaining teachers are round-robin distributed with
+// a soft cap so no one is buried in 30 classes a week.
+export function assignTeachersToGroups(state: GameState): void {
+  // Clear existing assignments.
+  for (const g of Object.values(state.groups)) g.teacherIds = [];
+
+  for (const subject of ALL_SUBJECTS) {
+    const subjectGroups = Object.values(state.groups)
+      .filter((g) => g.subject === subject)
+      .sort((a, b) => a.yearGroup - b.yearGroup || a.setNumber - b.setNumber);
+    if (subjectGroups.length === 0) continue;
+
+    const subjectStaff = Object.values(state.staff).filter(
+      (s) => s.subject === subject && (s.role === "Teacher" || s.role === "Head of Department"),
+    );
+    if (subjectStaff.length === 0) continue;
+
+    const hod = subjectStaff.find((s) => s.role === "Head of Department");
+    const others = subjectStaff.filter((s) => s.id !== hod?.id);
+
+    // HoD picks one group per year, style-dependent.
+    const claimed = new Set<ID>();
+    if (hod) {
+      const byYear = new Map<YearGroup, TeachingGroup[]>();
+      for (const g of subjectGroups) {
+        const list = byYear.get(g.yearGroup) ?? [];
+        list.push(g);
+        byYear.set(g.yearGroup, list);
+      }
+      const style = hod.allocationStyle ?? "balanced";
+      for (const [, groups] of byYear) {
+        let pick: TeachingGroup | undefined;
+        if (groups.length === 1) {
+          pick = groups[0];
+        } else if (style === "careerist") {
+          pick = groups[0]; // top set
+        } else if (style === "collegiate") {
+          pick = groups[groups.length - 1]; // bottom set / hardest
+        } else {
+          pick = groups[Math.floor((groups.length - 1) / 2)]; // middle
+        }
+        if (pick) {
+          pick.teacherIds.push(hod.id);
+          claimed.add(pick.id);
+        }
+      }
+    }
+
+    // Round-robin remaining groups across non-HoD subject teachers, soft-cap 5.
+    const pool = others.length > 0 ? others : (hod ? [hod] : []);
+    if (pool.length === 0) continue;
+    const load = new Map<ID, number>();
+    for (const s of pool) load.set(s.id, 0);
+    if (hod) load.set(hod.id, claimed.size);
+    const unclaimed = subjectGroups.filter((g) => !claimed.has(g.id));
+    let idx = 0;
+    for (const g of unclaimed) {
+      // Pick lightest-loaded teacher; round-robin breaks ties.
+      let bestId: ID | undefined;
+      let best = Infinity;
+      for (let i = 0; i < pool.length; i++) {
+        const s = pool[(idx + i) % pool.length]!;
+        const l = load.get(s.id) ?? 0;
+        if (l < best) {
+          best = l;
+          bestId = s.id;
+        }
+      }
+      if (!bestId) bestId = pool[0]!.id;
+      g.teacherIds.push(bestId);
+      load.set(bestId, (load.get(bestId) ?? 0) + 1);
+      idx = (idx + 1) % pool.length;
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -293,6 +571,10 @@ export function generateNewGame(opts: NewGameOptions): GameState {
     yearsInspected: 3,
     rooms: 60,
     maintenanceBacklog: 35,
+    settingPolicy: generateInitialSettingPolicy(rng),
+    // Player inherits a school where the previous Head delegated allocation
+    // to a deputy. They can flip "next year" on Results Day.
+    allocationDelegation: { thisYear: "deputy", nextYear: "deputy" },
   };
 
   const headteacher: Headteacher = {
@@ -305,7 +587,7 @@ export function generateNewGame(opts: NewGameOptions): GameState {
     yearsAsHead: 0,
   };
 
-  return {
+  const state: GameState = {
     seedLabel: opts.seed,
     rngState: rng.getState(),
     dayIndex: 0,
@@ -315,6 +597,7 @@ export function generateNewGame(opts: NewGameOptions): GameState {
     headteacher,
     pupils,
     staff,
+    groups: {},
     inbox: [],
     resolvedInbox: [],
     interruption: {
@@ -329,6 +612,16 @@ export function generateNewGame(opts: NewGameOptions): GameState {
     results: [],
     gameOver: false,
   };
+
+  // Populate teaching groups + assign teachers using the just-built policy.
+  for (const yg of YEAR_GROUPS) {
+    assignPupilsToGroupsForYear(rng, state, yg);
+  }
+  assignTeachersToGroups(state);
+  // Sync rngState since generation consumed more random values.
+  state.rngState = rng.getState();
+
+  return state;
 }
 
 function defaultReputation(seed: number): ReputationAxes {

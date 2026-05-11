@@ -7,7 +7,7 @@ import type { GameState } from "./types.ts";
 
 const SAVE_KEY_PREFIX = "school-manager:save:";
 const AUTOSAVE_KEY = "school-manager:autosave";
-const VERSION = 1;
+const VERSION = 2;
 
 interface SaveEnvelope {
   version: number;
@@ -26,10 +26,27 @@ export function serialize(state: GameState, label = "save"): string {
   return JSON.stringify(env);
 }
 
+export class SaveVersionError extends Error {
+  readonly found: unknown;
+  readonly expected: number;
+  constructor(found: unknown) {
+    super(
+      `Save was written by an earlier version of the game (v${String(found)}) and can't be opened by v${VERSION}. ` +
+        `Start a new career — Phase 2 changed the data model.`,
+    );
+    this.name = "SaveVersionError";
+    this.found = found;
+    this.expected = VERSION;
+  }
+}
+
 export function deserialize(json: string): GameState {
   const env = JSON.parse(json) as SaveEnvelope;
-  if (!env || typeof env !== "object" || env.version !== VERSION) {
-    throw new Error("Save format mismatch — only version 1 is supported.");
+  if (!env || typeof env !== "object" || typeof env.version !== "number") {
+    throw new Error("Save file is malformed — could not parse envelope.");
+  }
+  if (env.version !== VERSION) {
+    throw new SaveVersionError(env.version);
   }
   return env.state;
 }
@@ -55,6 +72,17 @@ export function loadFromBrowser(slot: string): GameState | null {
   return raw ? deserialize(raw) : null;
 }
 
+// Same as deserialize but distinguishes "no save" from "save is the wrong
+// version". Returns the version found if it's a known-bad version.
+export function probeSaveVersion(json: string): number | null {
+  try {
+    const env = JSON.parse(json) as SaveEnvelope;
+    return typeof env?.version === "number" ? env.version : null;
+  } catch {
+    return null;
+  }
+}
+
 export function listBrowserSaves(): string[] {
   if (!hasStorage()) return [];
   const slots: string[] = [];
@@ -78,5 +106,17 @@ export function autosave(state: GameState): void {
 export function loadAutosave(): GameState | null {
   if (!hasStorage()) return null;
   const raw = window.localStorage.getItem(AUTOSAVE_KEY);
-  return raw ? deserialize(raw) : null;
+  if (!raw) return null;
+  try {
+    return deserialize(raw);
+  } catch (err) {
+    if (err instanceof SaveVersionError) {
+      // Autosave is from an earlier version — discard so the start screen
+      // is clean. The user's named saves remain (they can see them listed
+      // and get a friendly error if they try to load).
+      window.localStorage.removeItem(AUTOSAVE_KEY);
+      return null;
+    }
+    throw err;
+  }
 }

@@ -1,7 +1,12 @@
 import { h } from "../dom.ts";
 import { generateNewGame } from "../../sim/generators.ts";
 import { store } from "../store.ts";
-import { autosave, listBrowserSaves, loadFromBrowser } from "../../sim/save.ts";
+import {
+  SaveVersionError,
+  autosave,
+  listBrowserSaves,
+  loadFromBrowser,
+} from "../../sim/save.ts";
 
 export function renderStartScreen(): HTMLElement {
   const root = h("div", { class: "start-screen" });
@@ -50,7 +55,7 @@ export function renderStartScreen(): HTMLElement {
     h(
       "div",
       {},
-      h("p", { class: "dim" }, "Phase 0 + Phase 1 vertical slice. One school, one career year, an inbox, and a results day. Save anywhere."),
+      h("p", { class: "dim" }, "Phase 2 build. Real teaching groups, per-pupil progress trajectories, and a Head who can delegate (or not). Save anywhere."),
       h("label", {}, "Seed (deterministic — same seed, same school)"),
       seedInput,
       h(
@@ -78,8 +83,16 @@ export function renderStartScreen(): HTMLElement {
             onclick: () => {
               const slot = savesSelect.value;
               if (!slot) return;
-              const loaded = loadFromBrowser(slot);
-              if (loaded) store.setState(loaded);
+              try {
+                const loaded = loadFromBrowser(slot);
+                if (loaded) store.setState(loaded);
+              } catch (err) {
+                if (err instanceof SaveVersionError) {
+                  alert(err.message);
+                } else {
+                  alert("Could not load save: " + String(err));
+                }
+              }
             },
           },
           "Load",

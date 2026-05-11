@@ -10,7 +10,11 @@ import {
   type YearGroup,
 } from "./types.ts";
 import { RNG } from "./rng.ts";
-import { generatePupil } from "./generators.ts";
+import {
+  assignPupilsToGroupsForYear,
+  assignTeachersToGroups,
+  generatePupil,
+} from "./generators.ts";
 
 function meanAttainment(attainment: Record<Subject, number>): number {
   const vals = Object.values(attainment);
@@ -152,6 +156,9 @@ export function rolloverYear(state: GameState): void {
     p.behaviourPoints = 0;
     p.flagged = false;
     p.notes = [];
+    // Past-year teaching-group assignments are stale once year groups shift;
+    // wipe them so the next allocation pass can rebuild cleanly.
+    p.groupBySubject = {};
     survivors[p.id] = p;
     newPupilIds.push(p.id);
   }
@@ -168,6 +175,19 @@ export function rolloverYear(state: GameState): void {
 
   state.pupils = survivors;
   state.school.pupilIds = newPupilIds;
+
+  // Wipe stale teaching groups (they referenced leavers + old year structure).
+  state.groups = {};
+
+  // Allocate pupils to groups for the new year. If the Head delegated this
+  // to a deputy, populate automatically; otherwise build the empty group
+  // slots so the player can drag pupils in via Timetable → Sets.
+  state.school.allocationDelegation.thisYear = state.school.allocationDelegation.nextYear;
+  const populate = state.school.allocationDelegation.thisYear === "deputy";
+  for (const yg of YEAR_GROUPS) {
+    assignPupilsToGroupsForYear(rng, state, yg, populate);
+  }
+  assignTeachersToGroups(state);
 
   // Staff ageing — and a small chance of natural attrition.
   const departing: string[] = [];

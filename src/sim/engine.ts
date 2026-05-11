@@ -8,11 +8,16 @@ import {
   rollIncidentForDay,
 } from "./incidents.ts";
 import { calculateYearEndResults, rolloverYear } from "./results.ts";
+import { ALL_SUBJECTS } from "./types.ts";
 import type {
   GameState,
   HistoryEntry,
   IncidentInstance,
+  ProgressSnapshot,
+  Pupil,
   ResolutionEffects,
+  Staff,
+  Subject,
 } from "./types.ts";
 
 const MAX_STEPS_PER_CONTINUE = 1000; // safety rail
@@ -187,32 +192,101 @@ export function continueUntilInterrupt(state: GameState): StepResult {
   return { paused: true, reason: "Step limit reached (safety rail)", events: aggregateEvents };
 }
 
-// Pupil progression model — applied at each reporting point. Attainment drifts
-// toward ability, modulated by attendance, engagement, behaviour, school
-// quality (staff-morale-as-proxy for now), with a small variance term.
+// Per-teacher quality function. Returns a modifier in roughly [-1, +1] that
+// scales attainment drift. Deliberately open-ended — start with the four
+// obvious classroom attributes weighted, and expand later with morale,
+// energy, mentoring, archetype, pupil-teacher fit, etc.
+// TODO: extend with morale (low morale eats lesson quality), pupil-teacher
+// fit (e.g. brilliant-but-difficult specialist underperforms with low
+// behaviour-propensity pupils), and archetype-specific bonuses.
+export function computeTeacherEffect(teacher: Staff): number {
+  const a = teacher.attrs;
+  const weighted =
+    a.subjectKnowledge * 0.3 +
+    a.classroomManagement * 0.3 +
+    a.lessonPlanning * 0.2 +
+    a.markingEfficiency * 0.2;
+  // Map from 1-20 scale (midpoint 10.5) to [-1, +1].
+  return clamp((weighted - 10.5) / 9.5, -1, 1);
+}
+
+// Resolve the teacher who teaches a given pupil a given subject. Returns
+// null if the pupil isn't yet assigned or the group has no teacher.
+function teacherFor(state: GameState, pupil: Pupil, subject: Subject): Staff | null {
+  const gid = pupil.groupBySubject[subject];
+  if (!gid) return null;
+  const g = state.groups[gid];
+  if (!g || g.teacherIds.length === 0) return null;
+  // Co-teaching averaging is for a later phase; for now take the first.
+  const tid = g.teacherIds[0]!;
+  return state.staff[tid] ?? null;
+}
+
+// Set-position peer effect: top set + small positive drift, bottom set
+// small negative. Mixed-ability is neutral. Small on purpose so setting is
+// a real trade-off, not a free win.
+function setPositionEffect(state: GameState, pupil: Pupil, subject: Subject): number {
+  const gid = pupil.groupBySubject[subject];
+  if (!gid) return 0;
+  const g = state.groups[gid];
+  if (!g || !g.isSetted) return 0;
+  // Count groups in this (subject × year) to know how many sets there are.
+  let n = 0;
+  for (const other of Object.values(state.groups)) {
+    if (other.subject === subject && other.yearGroup === g.yearGroup) n++;
+  }
+  if (n <= 1) return 0;
+  // Linear from +0.5 (top set) to -0.5 (bottom set).
+  const t = (g.setNumber - 1) / (n - 1);
+  return 0.5 - t;
+}
+
+// Pupil progression model — applied at each reporting point. Attainment
+// drifts toward ability, modulated by attendance, engagement, behaviour,
+// the assigned teacher's quality (per pupil per subject), and a small
+// variance term.
 function progressPupilsAtReportingPoint(state: GameState, rng: RNG): void {
-  const schoolFactor = (state.school.reputation.staffMorale - 50) / 100; // -0.5..+0.5
+  // Fallback when a pupil has no teacher (manual allocation pending, or
+  // missing staff): pull the school's staff-morale signal as a coarse proxy.
+  const fallbackTeacherEffect = (state.school.reputation.staffMorale - 50) / 100;
+
   for (const p of Object.values(state.pupils)) {
     const ambitionFactor = (p.ambition - 50) / 200;
     const attendanceFactor = (p.attendancePct - 90) / 100;
     const engagementFactor = (p.engagement - 50) / 200;
     const behaviourFactor = (50 - p.behaviourPropensity) / 200;
     const incidentDrag = -0.4 * p.incidentsThisYear;
-    for (const subj of Object.keys(p.ability) as Array<keyof typeof p.ability>) {
+    for (const subj of ALL_SUBJECTS) {
       const ceiling = p.ability[subj];
       const current = p.attainment[subj];
       const drift = (ceiling - current) * 0.18; // pull toward ceiling
       const noise = rng.bounded(0, 3, -7, 7);
+      const teacher = teacherFor(state, p, subj);
+      const teacherEffect = teacher
+        ? computeTeacherEffect(teacher)
+        : fallbackTeacherEffect;
+      const peerEffect = setPositionEffect(state, p, subj);
       const adj =
         drift +
         ambitionFactor * 1.5 +
         attendanceFactor * 2 +
         engagementFactor * 1.5 +
         behaviourFactor * 1.5 +
-        schoolFactor * 2 +
+        teacherEffect * 3 +
+        peerEffect +
         incidentDrag +
         noise;
       p.attainment[subj] = clamp(Math.round(current + adj), 1, 99);
+    }
+    // Snapshot this reporting point onto the pupil's history.
+    const snapshot: ProgressSnapshot = {
+      day: state.dayIndex,
+      date: formatDate(dayInfo(state.schoolYearStart, state.dayIndex).date),
+      perSubject: { ...p.attainment },
+    };
+    p.progressHistory.push(snapshot);
+    if (p.progressHistory.length > 30) {
+      p.progressHistory.splice(0, p.progressHistory.length - 30);
     }
     // Slight attendance/engagement drift toward stable mean, with shocks.
     if (rng.chance(0.05)) p.attendancePct = clamp(p.attendancePct + rng.int(-5, 2), 50, 100);

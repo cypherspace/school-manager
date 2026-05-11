@@ -29,6 +29,12 @@ export const ALL_SUBJECTS: readonly Subject[] = [
 export type YearGroup = 7 | 8 | 9 | 10 | 11;
 export const YEAR_GROUPS: readonly YearGroup[] = [7, 8, 9, 10, 11] as const;
 
+export interface ProgressSnapshot {
+  day: number; // dayIndex at which it was recorded
+  date: string; // ISO date, for convenience in views
+  perSubject: Record<Subject, number>; // attainment at this reporting point
+}
+
 export interface Pupil {
   id: ID;
   givenName: string;
@@ -45,6 +51,11 @@ export interface Pupil {
   // Academic
   ability: Record<Subject, number>; // 0-100, hidden ceiling
   attainment: Record<Subject, number>; // 0-100, current observable
+  // Per-subject teaching-group assignment (TeachingGroup id).
+  // Empty entries mean "not yet allocated" — common during manual allocation.
+  groupBySubject: Partial<Record<Subject, ID>>;
+  // Half-termly snapshots of attainment, oldest first. Capped at ~30 entries.
+  progressHistory: ProgressSnapshot[];
   // Behaviour
   behaviourPropensity: number; // 0-100, hidden — higher = more likely to act out
   behaviourPoints: number; // signed running total (negative = bad)
@@ -108,7 +119,34 @@ export interface Staff {
   workload: number; // 0-100
   performanceRating: number; // 0-100, updated by appraisals
   flagged: boolean;
+  // HoD-only: how this HoD distributes classes to their staff. Derived from
+  // attrs at school generation. UI surfaces this so the player can see *why*
+  // a collegiate HoD keeps taking the hardest sets.
+  allocationStyle?: AllocationStyle;
 }
+
+export type AllocationStyle = "careerist" | "collegiate" | "balanced";
+
+// Per-subject setting policy. Captures the state the previous Head left in
+// place when the player arrives. Mutable — the player can change it later.
+export interface SettingPolicy {
+  isSetted: boolean;
+  // Lowest year group at which this subject is setted. null when not setted.
+  introducedFromYear: YearGroup | null;
+}
+
+export interface TeachingGroup {
+  id: ID;
+  subject: Subject;
+  yearGroup: YearGroup;
+  // 1-indexed. 1 = top set when setted; arbitrary stable index when not setted.
+  setNumber: number;
+  isSetted: boolean;
+  teacherIds: ID[]; // typically one, kept as array for future co-teaching
+  pupilIds: ID[];
+}
+
+export type AllocationDecider = "head" | "deputy";
 
 export type IncidentCategory =
   | "Safeguarding"
@@ -197,6 +235,14 @@ export interface School {
   // Site (placeholder for Phase 6)
   rooms: number;
   maintenanceBacklog: number; // 0-100
+  // Setting policy by subject. The Head (player) can change this later.
+  settingPolicy: Record<Subject, SettingPolicy>;
+  // Who allocates pupils to teaching groups next time round.
+  // "deputy" auto-assigns; "head" waits for the player to do it manually.
+  allocationDelegation: {
+    thisYear: AllocationDecider;
+    nextYear: AllocationDecider;
+  };
 }
 
 export interface Headteacher {
@@ -243,6 +289,7 @@ export interface GameState {
   headteacher: Headteacher;
   pupils: Record<ID, Pupil>;
   staff: Record<ID, Staff>;
+  groups: Record<ID, TeachingGroup>;
   // Inbox
   inbox: IncidentInstance[];
   resolvedInbox: IncidentInstance[];
