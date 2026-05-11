@@ -32,6 +32,22 @@ export function renderApplications(): HTMLElement {
   );
 }
 
+function decisionStatus(
+  s: ReturnType<typeof store.require>,
+  app: Application,
+): string {
+  if (app.result === "pending") {
+    const daysLeft = app.resolveOnDay - s.dayIndex;
+    if (daysLeft <= 0) return "Panel sitting today";
+    if (daysLeft === 1) return "Decision tomorrow";
+    return `Decision in ${daysLeft} days`;
+  }
+  if (app.result === "offered") return "Offer on the table";
+  if (app.result === "accepted") return "Accepted";
+  if (app.result === "declined") return "You declined";
+  return "Rejected";
+}
+
 function renderApp(
   s: ReturnType<typeof store.require>,
   app: Application,
@@ -49,7 +65,7 @@ function renderApp(
       h(
         "span",
         { class: "dim", style: { marginLeft: "6px", fontSize: "12px" } },
-        `Submitted ${app.submittedYear}, wave ${app.submittedWave}`,
+        decisionStatus(s, app),
       ),
     ),
     h(

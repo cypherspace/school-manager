@@ -9,6 +9,7 @@ import { generateNewGame, hireAtSectorSchool } from "./generators.ts";
 import {
   acceptOffer,
   availableVacancies,
+  fireVacancyWave,
   pendingOffer,
   pickInterviewQuestions,
   submitApplication,
@@ -45,9 +46,10 @@ function main(): void {
   console.log();
 
   for (let i = 0; i < years; i++) {
-    // Apply to a stretch vacancy at the start of the year so the post-easter
-    // / summer waves catch the application.
+    // Force the post-christmas wave open at year start so the auto-pilot has
+    // something to apply to (in the UI, this happens organically on Jan 8).
     if (i >= 1) {
+      fireVacancyWave(state, "post-christmas", null);
       const reach = availableVacancies(state)
         .filter((v) => (state.sector.schools[v.schoolId]?.reputationTier ?? 0) >= 3)
         .sort(

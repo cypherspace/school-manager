@@ -13,8 +13,9 @@ import { CONFIG } from "./config.ts";
 import { tickSectorYear } from "./sector.ts";
 import {
   archiveCurrentSchool,
+  closeStaleVacancies,
   fireVacancyWave,
-  resolveInterviewsForWave,
+  resolveDueApplications,
 } from "./career.ts";
 import { tickFormerSchool } from "./formerSchools.ts";
 import { applyIncidentReputation, applyHireabilityFloor, snapshotReputation, applySackingReputationHit } from "./reputation.ts";
@@ -436,18 +437,19 @@ function fireWavesIfDue(state: GameState, date: Date): void {
   for (const [wave, m, d] of checks) {
     if (month === m && day === d && state.sector.lastWaveFiredYear[wave] !== state.schoolYearStart) {
       fireVacancyWave(state, wave, null);
-      // Resolve any pending applications a few weeks later — we simulate by
-      // resolving at the same trigger point, so player offers arrive in-band.
-      const outcomes = resolveInterviewsForWave(state, wave);
-      for (const out of outcomes) {
-        if (out.playerOffered) {
-          state.pauseReason = `Offer received from ${nameForVacancy(state, out.vacancyId)}`;
-        } else if (out.playerRejected) {
-          log(state, `Rejected: ${nameForVacancy(state, out.vacancyId)}`);
-        }
-      }
     }
   }
+  // Per-application: resolve any that the panel has now sat for, and
+  // auto-fill any vacancies that have aged out without an application.
+  const outcomes = resolveDueApplications(state);
+  for (const out of outcomes) {
+    if (out.playerOffered) {
+      state.pauseReason = `Offer received from ${nameForVacancy(state, out.vacancyId)}`;
+    } else if (out.playerRejected) {
+      log(state, `Rejected: ${nameForVacancy(state, out.vacancyId)}`);
+    }
+  }
+  closeStaleVacancies(state);
 }
 
 function nameForVacancy(state: GameState, vacancyId: ID): string {

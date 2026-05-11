@@ -402,6 +402,9 @@ export interface Vacancy {
   schoolId: ID;
   openedWave: VacancyWave;
   openedYear: number; // schoolYearStart in which it opened
+  openedOnDay: number; // dayIndex within openedYear
+  closesOnDay: number; // dayIndex within openedYear: vacancy closes; if no
+  // player application is pending by then, a rival fills it.
   startTerm: "easter" | "summer" | "autumn";
   startYear: number; // schoolYearStart of the year it starts
   minPublicReputation: number;
@@ -434,6 +437,8 @@ export interface Application {
   isPlayer: boolean;
   submittedYear: number;
   submittedWave: VacancyWave;
+  submittedOnDay: number; // dayIndex within submittedYear
+  resolveOnDay: number; // dayIndex at which the panel sits + decides
   answers: ApplicationAnswer[];
   score: number;
   result: "pending" | "offered" | "rejected" | "accepted" | "declined";

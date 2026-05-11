@@ -52,6 +52,16 @@ export const CONFIG = {
   expectationsHitMagnitude: 8,
   promiseHitMagnitude: 12,
 
+  // Days between submission and the panel decision. A realistic fortnight —
+  // schools say "we'll let you know by the end of next week" and they do.
+  interviewLeadDays: 14,
+
+  // Days a vacancy stays open before a rival fills it (if no player
+  // application is pending by then). Long enough to give the player a
+  // genuine choice, short enough that the sector doesn't sit on vacancies
+  // for half a year.
+  vacancyOpenDays: 45,
+
   // Interview scoring.
   interviewQuestionCount: 11,
   interviewBaselineWeights: {

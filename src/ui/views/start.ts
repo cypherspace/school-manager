@@ -1,7 +1,7 @@
 import { h } from "../dom.ts";
 import { generateNewGame } from "../../sim/generators.ts";
 import { generateSector } from "../../sim/sector.ts";
-import { fireVacancyWave, resolveInterviewsForWave } from "../../sim/career.ts";
+import { fireVacancyWave } from "../../sim/career.ts";
 import { RNG } from "../../sim/rng.ts";
 import { BACKGROUNDS, PERKS, listBackgrounds, listPerks } from "../../sim/perks.ts";
 import { store } from "../store.ts";
@@ -340,9 +340,6 @@ function startCareer(): void {
   // to apply to from day one.
   if (draft.startUnemployed) {
     fireVacancyWave(state, "post-christmas", null);
-    // Resolve any prior applications immediately if there happened to be any
-    // (there won't be on day one, but keeps the engine state symmetric).
-    resolveInterviewsForWave(state, "post-christmas");
   }
   store.setState(state);
   autosave(state);

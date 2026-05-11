@@ -382,27 +382,22 @@ export function submitApplication(
   vacancyId: ID,
   answers: ApplicationAnswer[],
 ): Application {
+  const vac = state.sector.vacancies[vacancyId];
   const app: Application = {
-    id: makeId("ap", rngFor(state, "submit")),
+    id: makeId("ap", rngFor(state, `submit:${vacancyId}:${state.dayIndex}`)),
     vacancyId,
     headId: state.headteacher.id,
     isPlayer: true,
     submittedYear: state.schoolYearStart,
-    submittedWave: "post-christmas", // overwritten by caller
+    submittedWave: vac?.openedWave ?? "post-christmas",
+    submittedOnDay: state.dayIndex,
+    resolveOnDay: state.dayIndex + CONFIG.interviewLeadDays,
     answers,
     score: 0,
     result: "pending",
   };
-  // Set submittedWave to the latest unfired wave for the year.
-  app.submittedWave = currentApplicationWave(state);
   state.sector.applications[app.id] = app;
   return app;
-}
-
-function currentApplicationWave(state: GameState): VacancyWave {
-  // A vacancy's wave is fixed at creation; this is the wave the player is
-  // applying *into*, taken from the vacancy. Default to the most recent.
-  return "post-christmas";
 }
 
 // Score an application: baseline (rep + attribute fit) sigmoid + stance modifier.
@@ -534,6 +529,8 @@ export function generateRivalApplication(
     isPlayer: false,
     submittedYear: state.schoolYearStart,
     submittedWave: vacancy.openedWave,
+    submittedOnDay: state.dayIndex,
+    resolveOnDay: state.dayIndex + CONFIG.interviewLeadDays,
     answers,
     score: 0,
     result: "pending",
@@ -576,6 +573,8 @@ export function fireVacancyWave(
       schoolId,
       openedWave: wave,
       openedYear: state.schoolYearStart,
+      openedOnDay: state.dayIndex,
+      closesOnDay: state.dayIndex + CONFIG.vacancyOpenDays,
       startTerm,
       startYear: state.schoolYearStart + startYearOffset,
       minPublicReputation: Math.max(0, ss.reputationTier * 10 - 5),
@@ -604,76 +603,104 @@ export interface InterviewOutcome {
   playerRejected: boolean;
 }
 
-// Resolution mapping: vacancies opened in wave W are resolved at the
-// following wave. summer→post-christmas of next year.
-function vacancyResolvesAt(openedWave: VacancyWave): {
-  wave: VacancyWave;
-  yearOffset: number;
-} {
-  if (openedWave === "post-christmas") return { wave: "post-easter", yearOffset: 0 };
-  if (openedWave === "post-easter") return { wave: "summer", yearOffset: 0 };
-  return { wave: "post-christmas", yearOffset: 1 };
-}
-
-export function resolveInterviewsForWave(
-  state: GameState,
-  wave: VacancyWave,
-): InterviewOutcome[] {
-  const rng = rngFor(state, `interview:${wave}:${state.schoolYearStart}`);
-  const outcomes: InterviewOutcome[] = [];
+// Close vacancies that have been open too long with nobody pending. A rival
+// NPC takes the seat. Keeps the sector moving when the player ignores a
+// vacancy or never qualified for one.
+export function closeStaleVacancies(state: GameState): void {
   for (const vac of Object.values(state.sector.vacancies)) {
     if (vac.status !== "open") continue;
-    const r = vacancyResolvesAt(vac.openedWave);
-    if (r.wave !== wave) continue;
-    if (vac.openedYear + r.yearOffset !== state.schoolYearStart) continue;
-    // Collect player application + ensure at least 2 NPC rivals.
-    const apps = Object.values(state.sector.applications).filter(
-      (a) => a.vacancyId === vac.id && a.result === "pending",
+    if (vac.openedYear !== state.schoolYearStart) {
+      // Carry-over vacancy from a previous year — apply the same rule using
+      // dayIndex-from-now beyond the closesOnDay value (treated as
+      // year-relative). For simplicity, give carry-overs another 30 days
+      // before forcing closure.
+      if (state.dayIndex < 30) continue;
+    } else if (state.dayIndex < vac.closesOnDay) {
+      continue;
+    }
+    // Pending player application? Let it run; resolveDueApplications will
+    // handle it.
+    const pendingPlayer = Object.values(state.sector.applications).some(
+      (a) => a.vacancyId === vac.id && a.isPlayer && a.result === "pending",
     );
-    while (apps.length < 3) {
-      const rival = generateRivalApplication(state, rng, vac);
-      state.sector.applications[rival.id] = rival;
-      apps.push(rival);
-    }
-    // Score player application (if any) using their actual record.
-    for (const a of apps) {
-      if (a.isPlayer) {
-        a.score = scoreApplication(a, vac, state.headteacher);
-        // Below-bar rejection.
-        if (
-          state.headteacher.reputationPublic < vac.minPublicReputation &&
-          state.headteacher.reputationPrivate < vac.minPrivateReputation
-        ) {
-          a.score -= 0.3;
-        }
-      }
-    }
-    apps.sort((a, b) => b.score - a.score);
-    const winner = apps[0]!;
-    const playerApp = apps.find((a) => a.isPlayer);
-    // Mark all results.
-    for (const a of apps) {
-      a.result = a.id === winner.id ? "offered" : "rejected";
-    }
-    let playerOffered = false;
-    let playerRejected = false;
-    if (playerApp) {
-      if (playerApp.id === winner.id) playerOffered = true;
-      else playerRejected = true;
-    }
-    // If a rival won, fill the school immediately.
-    if (!playerOffered) {
-      backfillSectorHead(state, rng, vac.schoolId);
-      vac.status = "filled";
-    }
-    outcomes.push({
-      vacancyId: vac.id,
-      winnerApplicationId: winner.id,
-      playerOffered,
-      playerRejected,
-    });
+    if (pendingPlayer) continue;
+    const rng = rngFor(state, `auto-close:${vac.id}`);
+    backfillSectorHead(state, rng, vac.schoolId);
+    vac.status = "filled";
+  }
+}
+
+// Resolve any pending applications whose resolveOnDay has arrived. Each
+// application stands on its own — the panel sits a fortnight after you
+// applied, full stop.
+export function resolveDueApplications(state: GameState): InterviewOutcome[] {
+  const outcomes: InterviewOutcome[] = [];
+  for (const app of Object.values(state.sector.applications)) {
+    if (app.result !== "pending") continue;
+    if (!app.isPlayer) continue;
+    if (state.dayIndex < app.resolveOnDay) continue;
+    const out = resolveApplicationNow(state, app);
+    if (out) outcomes.push(out);
   }
   return outcomes;
+}
+
+// Resolve a single player application immediately. Generates 2 NPC rivals,
+// scores everyone, picks the winner. If the player won, marks them "offered"
+// and leaves the vacancy open until they accept/decline. If a rival won, the
+// rival fills the school straight away.
+function resolveApplicationNow(
+  state: GameState,
+  playerApp: Application,
+): InterviewOutcome | null {
+  const vac = state.sector.vacancies[playerApp.vacancyId];
+  if (!vac || vac.status !== "open") {
+    // Vacancy already filled while we were thinking. Polite rejection.
+    playerApp.result = "rejected";
+    return {
+      vacancyId: playerApp.vacancyId,
+      winnerApplicationId: playerApp.id,
+      playerOffered: false,
+      playerRejected: true,
+    };
+  }
+  const rng = rngFor(state, `resolve:${playerApp.id}`);
+  // Generate two NPC rival applications for the panel comparison.
+  const rivals: Application[] = [
+    generateRivalApplication(state, rng, vac),
+    generateRivalApplication(state, rng, vac),
+  ];
+  for (const r of rivals) state.sector.applications[r.id] = r;
+  // Score player.
+  playerApp.score = scoreApplication(playerApp, vac, state.headteacher);
+  if (
+    state.headteacher.reputationPublic < vac.minPublicReputation &&
+    state.headteacher.reputationPrivate < vac.minPrivateReputation
+  ) {
+    playerApp.score -= 0.3;
+  }
+  const all = [playerApp, ...rivals].sort((a, b) => b.score - a.score);
+  const winner = all[0]!;
+  for (const a of all) {
+    a.result = a.id === winner.id ? "offered" : "rejected";
+  }
+  if (winner.id === playerApp.id) {
+    return {
+      vacancyId: vac.id,
+      winnerApplicationId: playerApp.id,
+      playerOffered: true,
+      playerRejected: false,
+    };
+  }
+  // Rival won: fill the seat immediately.
+  backfillSectorHead(state, rng, vac.schoolId);
+  vac.status = "filled";
+  return {
+    vacancyId: vac.id,
+    winnerApplicationId: winner.id,
+    playerOffered: false,
+    playerRejected: true,
+  };
 }
 
 // ---- Accept / decline -------------------------------------------------------
