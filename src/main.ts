@@ -31,6 +31,11 @@ import {
 const root = document.getElementById("app");
 if (!root) throw new Error("No #app element in the page.");
 
+// Compact dashboard-strip toggle. Declared up front so it's out of the TDZ
+// before the first render — the autosave-restore path can fire renderApp
+// synchronously during module evaluation.
+let dashboardExpanded = false;
+
 store.subscribe(() => render());
 
 // Try autosave on boot. Lets users refresh without losing state.
@@ -78,7 +83,6 @@ function renderApp(): HTMLElement {
 
 // Compact, always-visible school-state header. Click to expand to the full
 // dashboard panel.
-let dashboardExpanded = false;
 function renderDashboardStrip(): HTMLElement {
   const s = store.require();
   const sch = s.school;
